@@ -45,12 +45,14 @@ source = { virtual = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "psycopg", extra = ["binary"] },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.141.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
 ]
 
 [[package]]
