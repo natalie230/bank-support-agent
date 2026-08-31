@@ -54,8 +54,11 @@ CREATE TABLE tickets (
   urgency     urgency_level NOT NULL DEFAULT 'normal',
   description TEXT NOT NULL DEFAULT '',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  claimed_at  TIMESTAMPTZ,
   CHECK (status <> 'open'    OR agent_id IS NULL),
-  CHECK (status <> 'in_chat' OR agent_id IS NOT NULL)
+  CHECK (status <> 'in_chat' OR agent_id IS NOT NULL),
+  CHECK (status <> 'open'    OR claimed_at IS NULL),
+  CHECK (status <> 'in_chat' OR claimed_at IS NOT NULL)
 );
 
 CREATE INDEX tickets_open ON tickets (urgency DESC, created_at) WHERE status = 'open';

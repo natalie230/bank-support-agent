@@ -19,6 +19,7 @@ if not url:
 
 db.SKILL_THRESHOLD = 1.0        # full coverage unless a test says otherwise
 db.WAIT_THRESHOLD_SECONDS = 10_000
+db.CLAIM_EXPIRY_SECONDS = 600   # tests backdate past this to force a release
 
 AGENTS = [  # name, status, capacity, skills, languages
     ("Priya", "available", 1, ["fraud"], ["en"]),
@@ -136,5 +137,25 @@ try:
     raise AssertionError("ANA@X.COM was accepted alongside ana@x.com")
 except psycopg.errors.UniqueViolation:
     pass
+
+# an agent who goes dark does not hold the ticket -- or their capacity -- forever
+con, agent, add_ticket = setup()
+tid = add_ticket()
+assert claim(con, agent["Priya"]) == tid
+assert claim(con, agent["Wei"]) is None, "fresh claim was released early"
+con.execute("UPDATE tickets SET claimed_at = now() - make_interval(secs => 1200)"
+            " WHERE id = %s", (tid,))
+assert claim(con, agent["Wei"]) == tid, "stale claim was never released"
+assert con.execute("SELECT count(*) AS n FROM tickets WHERE agent_id = %s",
+                   (agent["Priya"],)).fetchone()["n"] == 0, "Priya still holds capacity"
+
+# a released ticket keeps its age, so it outranks anything that arrived meanwhile
+con, agent, add_ticket = setup()
+old = add_ticket(age_seconds=300)
+assert claim(con, agent["Priya"]) == old
+con.execute("UPDATE tickets SET claimed_at = now() - make_interval(secs => 1200)"
+            " WHERE id = %s", (old,))
+add_ticket(urgency="high")  # fresh arrival that would win on urgency alone
+assert claim(con, agent["Wei"], wait_seconds=120) == old, "released ticket restarted its wait"
 
 print("ok")

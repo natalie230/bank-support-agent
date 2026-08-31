@@ -11,6 +11,8 @@ load_dotenv()
 # see docs/adr/0004-partial-matching-with-wait-threshold.md
 SKILL_THRESHOLD = float(os.environ.get("SKILL_THRESHOLD", 1.0))
 WAIT_THRESHOLD_SECONDS = float(os.environ.get("WAIT_THRESHOLD_SECONDS", 120))
+# see docs/adr/0005-claim-expiry-releases-abandoned-tickets.md
+CLAIM_EXPIRY_SECONDS = float(os.environ.get("CLAIM_EXPIRY_SECONDS", 3600))
 
 
 def dsn() -> str:
@@ -22,6 +24,31 @@ def dsn() -> str:
 
 def connect(url: str | None = None) -> psycopg.Connection:
     return psycopg.connect(url or dsn(), row_factory=dict_row, autocommit=True)
+
+
+def release_stale(
+    con: psycopg.Connection, expiry_seconds: float | None = None
+) -> list[int]:
+    """Send tickets whose agent went dark back to the waiting room.
+
+    ADR 0001 traded SQS's visibility timeout for writing this ourselves. A
+    released ticket keeps its original created_at, so it comes back old and
+    ranks ahead of fresh arrivals rather than starting its wait over.
+
+    ponytail: time-based, because nothing in this system reports agent
+    liveness. A real chat running past the expiry gets pulled out from under a
+    working agent -- the fix is an agent heartbeat, not a bigger number.
+    """
+    rows = con.execute(
+        """
+        UPDATE tickets SET status = 'open', agent_id = NULL, claimed_at = NULL
+        WHERE status = 'in_chat'
+          AND claimed_at <= now() - make_interval(secs => %(expiry)s)
+        RETURNING id
+        """,
+        {"expiry": CLAIM_EXPIRY_SECONDS if expiry_seconds is None else expiry_seconds},
+    ).fetchall()
+    return [r["id"] for r in rows]
 
 
 def claim(
@@ -40,6 +67,9 @@ def claim(
     Language is a hard filter at every threshold: an agent who cannot speak to
     the customer is not a bad match, they are no match.
     """
+    # ponytail: reap on poll -- no scheduler, no extra process. Nothing to
+    # release when nobody wants work anyway.
+    release_stale(con)
     params = {
         "me": agent_id,
         "floor": SKILL_THRESHOLD if skill_threshold is None else skill_threshold,
@@ -47,7 +77,7 @@ def claim(
     }
     row = con.execute(
         """
-        UPDATE tickets SET status = 'in_chat', agent_id = %(me)s
+        UPDATE tickets SET status = 'in_chat', agent_id = %(me)s, claimed_at = now()
         WHERE id = (
           SELECT t.id FROM tickets t
           WHERE t.status = 'open'
