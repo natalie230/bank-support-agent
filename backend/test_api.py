@@ -16,6 +16,7 @@ if not url:
 
 con = db.connect(url)
 con.execute(db.SCHEMA.read_text())
+con.execute(db.SEED.read_text())  # the roster the app actually ships with
 
 
 def test_db():  # point the app at the scratch database
@@ -28,12 +29,11 @@ client = TestClient(main.app)
 
 one = lambda sql, *a: con.execute(sql, a).fetchone()["id"]  # noqa: E731
 cust = one("INSERT INTO customers (name, email) VALUES ('Ana', 'a@x.com') RETURNING id")
-lang = one("INSERT INTO languages (name) VALUES ('en') RETURNING id")
-skill = one("INSERT INTO skills (name) VALUES ('fraud') RETURNING id")
-agent = one("INSERT INTO agents (name, email, status) "
-            "VALUES ('Priya', 'p@x.com', 'available') RETURNING id")
-con.execute("INSERT INTO agent_skills VALUES (%s, %s)", (agent, skill))
-con.execute("INSERT INTO agent_languages VALUES (%s, %s)", (agent, lang))
+lang = one("SELECT id FROM languages WHERE name = 'English'")
+skill = one("SELECT id FROM skills WHERE name = 'fraud'")
+# Priya: fraud + cards, English + Tamil, capacity 1 -- see seed.sql
+agent = one("UPDATE agents SET status = 'available'"
+            " WHERE email = 'priya@bank.example' RETURNING id")
 
 body = {"customer_id": cust, "language_id": lang, "skill_ids": [skill],
         "description": "card charged twice"}
@@ -67,8 +67,7 @@ assert r.status_code == 400, r.text
 r = client.post("/tickets", json={**body, "skill_ids": []})
 assert r.status_code == 422, r.text
 
-other = one("INSERT INTO agents (name, email, status) "
-            "VALUES ('Wei', 'w@x.com', 'available') RETURNING id")
+other = one("SELECT id FROM agents WHERE email = 'wei@bank.example'")
 
 # only the agent holding the ticket may close it
 assert client.put(f"/tickets/{ticket['id']}/close",
@@ -83,14 +82,15 @@ assert client.put(f"/tickets/{ticket['id']}/close",
 
 # closing frees capacity -- without this the desk deadlocks after N tickets
 assert client.get(f"/agents/{agent}/status").json() == {
-    "id": agent, "status": "available", "capacity": 1, "active_tickets": 0}
+    "id": agent, "name": "Priya", "status": "available",
+    "capacity": 1, "active_ticket_ids": []}
 second = client.post("/tickets", json=body).json()
 assert client.post(f"/agents/{agent}/claim").json()["id"] == second["id"]
 
 # going unavailable does not drop a chat already in progress
 r = client.put(f"/agents/{agent}/status", json={"status": "unavailable"})
-assert r.json() == {"id": agent, "status": "unavailable",
-                    "capacity": 1, "active_tickets": 1}, r.text
+assert r.json() == {"id": agent, "name": "Priya", "status": "unavailable",
+                    "capacity": 1, "active_ticket_ids": [second["id"]]}, r.text
 assert client.get(f"/tickets/{second['id']}").json()["status"] == "in_chat"
 
 # ...but no new work arrives while unavailable, even with capacity free
@@ -112,5 +112,39 @@ urgent = client.post("/tickets", json={**body, "urgency": "high"}).json()
 q = client.get("/queue").json()
 assert [t["id"] for t in q] == [urgent["id"], normal["id"]], q  # urgency beats age
 assert q[0]["skill_ids"] == [skill], q
+
+# reference data the sign-up forms read
+skills = client.get("/skills").json()
+languages = client.get("/languages").json()
+assert {s["name"] for s in skills} >= {"fraud", "mortgage"}, skills
+assert {x["name"] for x in languages} >= {"English", "Tamil"}, languages
+
+# same email is the same customer, not a second row -- and case does not matter
+c1 = client.post("/customers", json={"name": "Bo", "email": "bo@x.com"}).json()
+c2 = client.post("/customers", json={"name": "Bo Tan", "email": "BO@X.COM"}).json()
+assert c1["id"] == c2["id"] and c2["name"] == "Bo Tan", (c1, c2)
+assert client.post("/customers", json={"name": "Bo", "email": "nope"}).status_code == 422
+
+# a new hire lands on the roster but not on the phones
+hire = client.post("/agents", json={"name": "Kai", "email": "kai@bank.example",
+                                    "skill_ids": [skill], "language_ids": [lang],
+                                    "capacity": 2}).json()
+assert hire["status"] == "unavailable" and hire["capacity"] == 2, hire
+assert hire["active_ticket_ids"] == [], hire
+assert hire["id"] in [a["id"] for a in client.get("/agents").json()]
+assert client.post("/agents", json={"name": "No skills", "email": "x@bank.example",
+                                    "skill_ids": [], "language_ids": [lang]}
+                   ).status_code == 422
+
+# a bad skill id rolls the whole agent back -- no half-made agent on the roster
+before = len(client.get("/agents").json())
+assert client.post("/agents", json={"name": "Ghost", "email": "ghost@bank.example",
+                                    "skill_ids": [999999], "language_ids": [lang]}
+                   ).status_code == 400
+assert len(client.get("/agents").json()) == before, "half-made agent survived"
+
+# the console is served by the same app, so there is one thing to run
+home = client.get("/")
+assert home.status_code == 200 and "Bank support desk" in home.text, home.status_code
 
 print("ok")

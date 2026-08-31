@@ -1,10 +1,11 @@
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, EmailStr, Field
 
 from db import claim, connect, waiting
 
@@ -34,6 +35,7 @@ class Ticket(BaseModel):
     status: Literal["open", "in_chat", "closed"]
     urgency: Literal["normal", "high"]
     description: str
+    customer_name: str
     created_at: datetime
     skill_ids: list[int]
 
@@ -47,10 +49,13 @@ def integrity_error(request, exc: psycopg.IntegrityError):
 def fetch(con: psycopg.Connection, ticket_id: int) -> Ticket:
     row = con.execute(
         """
-        SELECT t.*, COALESCE(array_agg(ts.skill_id)
-                     FILTER (WHERE ts.skill_id IS NOT NULL), '{}'::bigint[]) AS skill_ids
-        FROM tickets t LEFT JOIN ticket_skills ts ON ts.ticket_id = t.id
-        WHERE t.id = %s GROUP BY t.id
+        SELECT t.*, c.name AS customer_name,
+               COALESCE(array_agg(ts.skill_id)
+                 FILTER (WHERE ts.skill_id IS NOT NULL), '{}'::bigint[]) AS skill_ids
+        FROM tickets t
+        JOIN customers c ON c.id = t.customer_id
+        LEFT JOIN ticket_skills ts ON ts.ticket_id = t.id
+        WHERE t.id = %s GROUP BY t.id, c.name
         """,
         (ticket_id,),
     ).fetchone()
@@ -121,15 +126,19 @@ class AgentStatusIn(BaseModel):
 
 class AgentStatus(BaseModel):
     id: int
+    name: str
     status: Literal["available", "unavailable"]
     capacity: int
-    active_tickets: int
+    active_ticket_ids: list[int]
 
 
 AGENT_STATUS_COLUMNS = """
-  id, status, capacity,
-  (SELECT count(*) FROM tickets t
-   WHERE t.agent_id = agents.id AND t.status = 'in_chat') AS active_tickets
+  id, name, status, capacity,
+  -- which tickets, not how many: a console reloaded mid-chat has to find its
+  -- way back to the ticket it is holding, and count alone cannot do that.
+  COALESCE((SELECT array_agg(t.id ORDER BY t.claimed_at) FROM tickets t
+            WHERE t.agent_id = agents.id AND t.status = 'in_chat'),
+           '{}'::bigint[]) AS active_ticket_ids
 """
 
 
@@ -157,3 +166,81 @@ def set_agent_status(
     if row is None:
         raise HTTPException(404, "agent not found")
     return AgentStatus(**row)
+
+
+class Named(BaseModel):
+    id: int
+    name: str
+
+
+@app.get("/skills")
+def list_skills(con: psycopg.Connection = Depends(db)) -> list[Named]:
+    return [Named(**r) for r in
+            con.execute("SELECT id, name FROM skills ORDER BY name").fetchall()]
+
+
+@app.get("/languages")
+def list_languages(con: psycopg.Connection = Depends(db)) -> list[Named]:
+    return [Named(**r) for r in
+            con.execute("SELECT id, name FROM languages ORDER BY name").fetchall()]
+
+
+class CustomerIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+
+
+class Customer(BaseModel):
+    id: int
+    name: str
+    email: str
+
+
+@app.post("/customers", status_code=201)
+def create_customer(payload: CustomerIn, con: psycopg.Connection = Depends(db)) -> Customer:
+    """One customer per email. Coming back with the same address is a lookup,
+    not a duplicate -- the name they give this time wins."""
+    row = con.execute(
+        "INSERT INTO customers (name, email) VALUES (%s, %s)"
+        " ON CONFLICT (lower(email)) DO UPDATE SET name = EXCLUDED.name"
+        " RETURNING id, name, email",
+        (payload.name, payload.email),
+    ).fetchone()
+    return Customer(**row)
+
+
+class AgentIn(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    skill_ids: list[int] = Field(min_length=1)
+    language_ids: list[int] = Field(min_length=1)
+    capacity: int = Field(default=1, ge=1)
+
+
+@app.post("/agents", status_code=201)
+def create_agent(payload: AgentIn, con: psycopg.Connection = Depends(db)) -> AgentStatus:
+    """Starts unavailable -- a new hire is on the roster, not on the phones."""
+    with con.transaction():
+        agent_id = con.execute(
+            "INSERT INTO agents (name, email, capacity) VALUES (%s, %s, %s) RETURNING id",
+            (payload.name, payload.email, payload.capacity),
+        ).fetchone()["id"]
+        con.execute("INSERT INTO agent_skills SELECT %s, unnest(%s::bigint[])",
+                    (agent_id, payload.skill_ids))
+        con.execute("INSERT INTO agent_languages SELECT %s, unnest(%s::bigint[])",
+                    (agent_id, payload.language_ids))
+    return get_agent_status(agent_id, con)
+
+
+@app.get("/agents")
+def list_agents(con: psycopg.Connection = Depends(db)) -> list[AgentStatus]:
+    return [AgentStatus(**r) for r in
+            con.execute(f"SELECT {AGENT_STATUS_COLUMNS} FROM agents ORDER BY name").fetchall()]
+
+
+INDEX = Path(__file__).parent / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    return FileResponse(INDEX)

@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
 SCHEMA = Path(__file__).parent / "schema.sql"
+SEED = Path(__file__).parent / "seed.sql"
 load_dotenv()
 
 # see docs/adr/0004-partial-matching-with-wait-threshold.md
@@ -118,10 +119,13 @@ def waiting(con: psycopg.Connection, wait_seconds: float | None = None) -> list[
     """
     return con.execute(
         """
-        SELECT t.*, COALESCE(array_agg(ts.skill_id)
-                     FILTER (WHERE ts.skill_id IS NOT NULL), '{}'::bigint[]) AS skill_ids
-        FROM tickets t LEFT JOIN ticket_skills ts ON ts.ticket_id = t.id
-        WHERE t.status = 'open' GROUP BY t.id
+        SELECT t.*, c.name AS customer_name,
+               COALESCE(array_agg(ts.skill_id)
+                 FILTER (WHERE ts.skill_id IS NOT NULL), '{}'::bigint[]) AS skill_ids
+        FROM tickets t
+        JOIN customers c ON c.id = t.customer_id
+        LEFT JOIN ticket_skills ts ON ts.ticket_id = t.id
+        WHERE t.status = 'open' GROUP BY t.id, c.name
         -- same ranking as claim() above; they must not disagree
         ORDER BY (t.created_at <= now() - make_interval(secs => %(wait)s)) DESC,
                  t.urgency DESC, t.created_at
@@ -136,4 +140,5 @@ if __name__ == "__main__":  # DESTRUCTIVE: drops and rebuilds the whole schema
         raise SystemExit("cancelled")
     with connect() as con:
         con.execute(SCHEMA.read_text())
-    print(f"schema rebuilt in {target}")
+        con.execute(SEED.read_text())
+    print(f"schema rebuilt and seeded in {target}")
