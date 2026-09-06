@@ -1,7 +1,8 @@
 -- Reference data plus a starter roster, so a fresh schema is usable immediately.
 -- Re-runnable: every insert ignores rows that already exist.
 
-INSERT INTO skills (name) VALUES ('fraud'), ('mortgage'), ('cards'), ('accounts')
+INSERT INTO skills (name, urgent) VALUES
+  ('fraud', true), ('mortgage', false), ('cards', false), ('accounts', false)
 ON CONFLICT DO NOTHING;
 
 INSERT INTO languages (name) VALUES ('English'), ('Mandarin'), ('Malay'), ('Tamil')

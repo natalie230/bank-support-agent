@@ -44,6 +44,7 @@ ticket = r.json()
 assert ticket["status"] == "open", ticket
 assert ticket["agent_id"] is None, ticket
 assert ticket["skill_ids"] == [skill], ticket
+assert ticket["urgency"] == "high", ticket  # fraud is an urgent skill; nobody asked
 
 r = client.get(f"/tickets/{ticket['id']}")
 assert r.status_code == 200 and r.json() == ticket, r.text
@@ -117,11 +118,16 @@ assert client.put("/agents/999999/status",
 
 # the waiting room is queryable -- the whole reason ADR 0001 picked a table
 assert client.get("/queue").json() == [], "in_chat ticket showed up as waiting"
-normal = client.post("/tickets", json=body).json()
-urgent = client.post("/tickets", json={**body, "urgency": "high"}).json()
+cards = one("SELECT id FROM skills WHERE name = 'cards'")  # not urgent, per seed.sql
+normal = client.post("/tickets", json={**body, "skill_ids": [cards]}).json()
+urgent = client.post("/tickets", json=body).json()
+assert (normal["urgency"], urgent["urgency"]) == ("normal", "high"), (normal, urgent)
 q = client.get("/queue").json()
 assert [t["id"] for t in q] == [urgent["id"], normal["id"]], q  # urgency beats age
 assert q[0]["skill_ids"] == [skill], q
+# ...and asking nicely does not help
+assert client.post("/tickets", json={**body, "skill_ids": [cards], "urgency": "high"}
+                   ).json()["urgency"] == "normal", "customer set their own urgency"
 
 # reference data the sign-up forms read
 skills = client.get("/skills").json()

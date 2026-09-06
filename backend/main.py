@@ -22,9 +22,6 @@ class TicketIn(BaseModel):
     language_id: int
     skill_ids: list[int] = Field(min_length=1)
     description: str = ""
-    # ponytail: the ERD derives urgency from the ticket's skills, but those
-    # rules do not exist yet. Taking it as input until they do.
-    urgency: Literal["normal", "high"] = "normal"
 
 
 class Ticket(BaseModel):
@@ -68,9 +65,18 @@ def fetch(con: psycopg.Connection, ticket_id: int) -> Ticket:
 def create_ticket(payload: TicketIn, con: psycopg.Connection = Depends(db)) -> Ticket:
     with con.transaction():
         ticket_id = con.execute(
-            "INSERT INTO tickets (customer_id, language_id, urgency, description)"
-            " VALUES (%s, %s, %s::urgency_level, %s) RETURNING id",
-            (payload.customer_id, payload.language_id, payload.urgency, payload.description),
+            """
+            INSERT INTO tickets (customer_id, language_id, urgency, description)
+            SELECT %(customer)s, %(language)s,
+                   -- rule-based: one urgent skill makes the whole ticket urgent.
+                   -- Not taken as input, or every customer would be urgent.
+                   CASE WHEN bool_or(urgent) THEN 'high' ELSE 'normal' END::urgency_level,
+                   %(description)s
+            FROM skills WHERE id = ANY(%(skills)s::bigint[])
+            RETURNING id
+            """,
+            {"customer": payload.customer_id, "language": payload.language_id,
+             "description": payload.description, "skills": payload.skill_ids},
         ).fetchone()["id"]
         con.execute(
             "INSERT INTO ticket_skills SELECT %s, unnest(%s::bigint[])",
