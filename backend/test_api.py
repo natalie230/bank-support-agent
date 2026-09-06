@@ -159,8 +159,4 @@ assert client.post("/agents", json={"name": "Ghost", "email": "ghost@bank.exampl
                    ).status_code == 400
 assert len(client.get("/agents").json()) == before, "half-made agent survived"
 
-# the console is served by the same app, so there is one thing to run
-home = client.get("/")
-assert home.status_code == 200 and "Bank support desk" in home.text, home.status_code
-
 print("ok")

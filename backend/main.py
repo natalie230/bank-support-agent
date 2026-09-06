@@ -1,10 +1,9 @@
 from datetime import datetime
-from pathlib import Path
 from typing import Literal
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, Field
 
 from db import claim, connect, waiting
@@ -281,11 +280,3 @@ def create_agent(payload: AgentIn, con: psycopg.Connection = Depends(db)) -> Age
 def list_agents(con: psycopg.Connection = Depends(db)) -> list[AgentStatus]:
     return [AgentStatus(**r) for r in
             con.execute(f"SELECT {AGENT_STATUS_COLUMNS} FROM agents ORDER BY name").fetchall()]
-
-
-INDEX = Path(__file__).parent / "index.html"
-
-
-@app.get("/", include_in_schema=False)
-def index() -> FileResponse:
-    return FileResponse(INDEX)
