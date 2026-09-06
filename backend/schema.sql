@@ -68,3 +68,15 @@ CREATE TABLE ticket_skills (
   skill_id  BIGINT NOT NULL REFERENCES skills(id),
   PRIMARY KEY (ticket_id, skill_id)
 );
+
+CREATE TYPE sender_kind AS ENUM ('customer', 'agent');
+
+CREATE TABLE messages (
+  id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  ticket_id  BIGINT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  sender     sender_kind NOT NULL,
+  body       TEXT NOT NULL CHECK (body <> ''),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX messages_ticket ON messages (ticket_id, id);

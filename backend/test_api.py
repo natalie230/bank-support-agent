@@ -57,6 +57,15 @@ assert claimed["status"] == "in_chat" and claimed["agent_id"] == agent, claimed
 # nothing left to claim -> null, and the agent is at capacity anyway
 assert client.post(f"/agents/{agent}/claim").json() is None
 
+# the chat itself: both sides post, everyone reads it back in order
+msgs = f"/tickets/{ticket['id']}/messages"
+r = client.post(msgs, json={"sender": "customer", "body": "hello?"})
+assert r.status_code == 201 and r.json()["sender"] == "customer", r.text
+client.post(msgs, json={"sender": "agent", "body": "hi, looking at it now"})
+assert [m["body"] for m in client.get(msgs).json()] == ["hello?", "hi, looking at it now"]
+assert client.post(msgs, json={"sender": "agent", "body": ""}).status_code == 422
+assert client.get("/tickets/999999/messages").status_code == 404
+
 assert client.get("/tickets/999999").status_code == 404
 
 # unknown customer id is a bad request, not a crash
@@ -79,6 +88,7 @@ assert r.status_code == 200 and r.json()["status"] == "closed", r.text
 # retrying the same close is a retry, not an error
 assert client.put(f"/tickets/{ticket['id']}/close",
                   json={"closed_by": agent}).status_code == 200
+assert client.post(msgs, json={"sender": "customer", "body": "wait"}).status_code == 409
 
 # closing frees capacity -- without this the desk deadlocks after N tickets
 assert client.get(f"/agents/{agent}/status").json() == {

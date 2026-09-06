@@ -84,6 +84,45 @@ def get_ticket(ticket_id: int, con: psycopg.Connection = Depends(db)) -> Ticket:
     return fetch(con, ticket_id)
 
 
+class MessageIn(BaseModel):
+    sender: Literal["customer", "agent"]
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class Message(BaseModel):
+    id: int
+    ticket_id: int
+    sender: Literal["customer", "agent"]
+    body: str
+    created_at: datetime
+
+
+@app.get("/tickets/{ticket_id}/messages")
+def list_messages(ticket_id: int, con: psycopg.Connection = Depends(db)) -> list[Message]:
+    """The chat so far, oldest first."""
+    fetch(con, ticket_id)  # 404 if there is no such ticket
+    # ponytail: the whole transcript on every poll. Add ?after=<id> when chats get long.
+    rows = con.execute(
+        "SELECT * FROM messages WHERE ticket_id = %s ORDER BY id", (ticket_id,)
+    ).fetchall()
+    return [Message(**r) for r in rows]
+
+
+@app.post("/tickets/{ticket_id}/messages", status_code=201)
+def post_message(
+    ticket_id: int, payload: MessageIn, con: psycopg.Connection = Depends(db)
+) -> Message:
+    """Say something on a ticket."""
+    if fetch(con, ticket_id).status == "closed":
+        raise HTTPException(409, "ticket is closed")
+    row = con.execute(
+        "INSERT INTO messages (ticket_id, sender, body)"
+        " VALUES (%s, %s::sender_kind, %s) RETURNING *",
+        (ticket_id, payload.sender, payload.body),
+    ).fetchone()
+    return Message(**row)
+
+
 @app.get("/queue")
 def get_queue(con: psycopg.Connection = Depends(db)) -> list[Ticket]:
     """The waiting room, ranked as claim() would take from it."""
