@@ -54,13 +54,15 @@ def setup():
         for lg in langs:
             con.execute("INSERT INTO agent_languages VALUES (%s, %s)", (agent[name], lang[lg]))
 
-    def add_ticket(skills=("fraud",), urgency="normal", language="en", age_seconds=0):
-        tid = one("INSERT INTO tickets (customer_id, language_id, urgency, created_at)"
-                  " VALUES (%s, %s, %s::urgency_level,"
+    def add_ticket(skills=("fraud",), urgency="normal", languages=("en",), age_seconds=0):
+        tid = one("INSERT INTO tickets (customer_id, urgency, created_at)"
+                  " VALUES (%s, %s::urgency_level,"
                   "         now() - make_interval(secs => %s)) RETURNING id",
-                  cust, lang[language], urgency, age_seconds)
+                  cust, urgency, age_seconds)
         for s in skills:
             con.execute("INSERT INTO ticket_skills VALUES (%s, %s)", (tid, skill[s]))
+        for lg in languages:
+            con.execute("INSERT INTO ticket_languages VALUES (%s, %s)", (tid, lang[lg]))
         return tid
 
     return con, agent, add_ticket
@@ -111,8 +113,13 @@ assert claim(con, agent["Priya"]) == urgent
 
 # language must match too
 con, agent, add_ticket = setup()
-add_ticket(language="zh")
+add_ticket(languages=("zh",))
 assert claim(con, agent["Priya"]) is None, "en-only agent took a zh ticket"
+
+# ...but any one shared language will do
+con, agent, add_ticket = setup()
+either = add_ticket(languages=("zh", "en"))
+assert claim(con, agent["Priya"]) == either, "en agent skipped a zh-or-en ticket"
 
 # a lower threshold lets a half-matched agent take a two-skill ticket
 con, agent, add_ticket = setup()

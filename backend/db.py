@@ -65,8 +65,9 @@ def claim(
     which point any available agent will do. Starving tickets sort first, so a
     steady stream of well-matched work cannot keep one waiting past its bound.
 
-    Language is a hard filter at every threshold: an agent who cannot speak to
-    the customer is not a bad match, they are no match.
+    Language is a hard filter at every threshold: the agent must speak one of
+    the languages the customer listed. Speaking none is not a bad match, it is
+    no match.
     """
     # ponytail: reap on poll -- no scheduler, no extra process. Nothing to
     # release when nobody wants work anyway.
@@ -82,8 +83,9 @@ def claim(
         WHERE id = (
           SELECT t.id FROM tickets t
           WHERE t.status = 'open'
-            AND t.language_id IN (
-              SELECT language_id FROM agent_languages WHERE agent_id = %(me)s)
+            AND EXISTS (
+              SELECT 1 FROM ticket_languages tl JOIN agent_languages al USING (language_id)
+              WHERE tl.ticket_id = t.id AND al.agent_id = %(me)s)
             AND EXISTS (
               SELECT 1 FROM agents a WHERE a.id = %(me)s AND a.status = 'available'
                 AND (SELECT count(*) FROM tickets
@@ -120,12 +122,13 @@ def waiting(con: psycopg.Connection, wait_seconds: float | None = None) -> list[
     return con.execute(
         """
         SELECT t.*, c.name AS customer_name,
-               COALESCE(array_agg(ts.skill_id)
-                 FILTER (WHERE ts.skill_id IS NOT NULL), '{}'::bigint[]) AS skill_ids
+               (SELECT COALESCE(array_agg(skill_id), '{}'::bigint[])
+                FROM ticket_skills WHERE ticket_id = t.id) AS skill_ids,
+               (SELECT COALESCE(array_agg(language_id), '{}'::bigint[])
+                FROM ticket_languages WHERE ticket_id = t.id) AS language_ids
         FROM tickets t
         JOIN customers c ON c.id = t.customer_id
-        LEFT JOIN ticket_skills ts ON ts.ticket_id = t.id
-        WHERE t.status = 'open' GROUP BY t.id, c.name
+        WHERE t.status = 'open'
         -- same ranking as claim() above; they must not disagree
         ORDER BY (t.created_at <= now() - make_interval(secs => %(wait)s)) DESC,
                  t.urgency DESC, t.created_at

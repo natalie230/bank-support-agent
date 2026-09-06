@@ -66,14 +66,16 @@ def start():
         st.write("Hello! Tell us who you are, then describe the problem below to start a chat.")
         name = st.text_input("Your name", max_chars=100)
         email = st.text_input("Email")
-        language = st.selectbox("Language", languages, format_func=lambda x: x["name"])
+        spoken = st.multiselect("Languages you can chat in", languages,
+                                format_func=lambda x: x["name"])
         topics = st.multiselect("What do you need help with?", skills,
                                 format_func=lambda x: x["name"])
     if problem := st.chat_input("Describe the problem"):
         try:
             customer = api("POST", "/customers", {"name": name, "email": email})
             ticket = api("POST", "/tickets", {
-                "customer_id": customer["id"], "language_id": language["id"],
+                "customer_id": customer["id"],
+                "language_ids": [x["id"] for x in spoken],
                 "skill_ids": [s["id"] for s in topics], "description": problem})
         except RuntimeError as e:
             st.error(str(e))

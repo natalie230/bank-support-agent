@@ -50,7 +50,6 @@ CREATE TABLE tickets (
   id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   customer_id BIGINT NOT NULL REFERENCES customers(id),
   agent_id    BIGINT REFERENCES agents(id),
-  language_id BIGINT NOT NULL REFERENCES languages(id),
   status      ticket_status NOT NULL DEFAULT 'open',
   urgency     urgency_level NOT NULL DEFAULT 'normal',
   description TEXT NOT NULL DEFAULT '',
@@ -68,6 +67,13 @@ CREATE TABLE ticket_skills (
   ticket_id BIGINT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
   skill_id  BIGINT NOT NULL REFERENCES skills(id),
   PRIMARY KEY (ticket_id, skill_id)
+);
+
+-- what the customer can chat in; an agent needs to share any one of them
+CREATE TABLE ticket_languages (
+  ticket_id   BIGINT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  language_id BIGINT NOT NULL REFERENCES languages(id),
+  PRIMARY KEY (ticket_id, language_id)
 );
 
 CREATE TYPE sender_kind AS ENUM ('customer', 'agent');

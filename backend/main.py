@@ -18,7 +18,7 @@ def db():
 
 class TicketIn(BaseModel):
     customer_id: int
-    language_id: int
+    language_ids: list[int] = Field(min_length=1)
     skill_ids: list[int] = Field(min_length=1)
     description: str = ""
 
@@ -27,7 +27,7 @@ class Ticket(BaseModel):
     id: int
     customer_id: int
     agent_id: int | None
-    language_id: int
+    language_ids: list[int]
     status: Literal["open", "in_chat", "closed"]
     urgency: Literal["normal", "high"]
     description: str
@@ -46,12 +46,13 @@ def fetch(con: psycopg.Connection, ticket_id: int) -> Ticket:
     row = con.execute(
         """
         SELECT t.*, c.name AS customer_name,
-               COALESCE(array_agg(ts.skill_id)
-                 FILTER (WHERE ts.skill_id IS NOT NULL), '{}'::bigint[]) AS skill_ids
+               (SELECT COALESCE(array_agg(skill_id), '{}'::bigint[])
+                FROM ticket_skills WHERE ticket_id = t.id) AS skill_ids,
+               (SELECT COALESCE(array_agg(language_id), '{}'::bigint[])
+                FROM ticket_languages WHERE ticket_id = t.id) AS language_ids
         FROM tickets t
         JOIN customers c ON c.id = t.customer_id
-        LEFT JOIN ticket_skills ts ON ts.ticket_id = t.id
-        WHERE t.id = %s GROUP BY t.id, c.name
+        WHERE t.id = %s
         """,
         (ticket_id,),
     ).fetchone()
@@ -65,8 +66,8 @@ def create_ticket(payload: TicketIn, con: psycopg.Connection = Depends(db)) -> T
     with con.transaction():
         ticket_id = con.execute(
             """
-            INSERT INTO tickets (customer_id, language_id, urgency, description)
-            SELECT %(customer)s, %(language)s,
+            INSERT INTO tickets (customer_id, urgency, description)
+            SELECT %(customer)s,
                    -- rule-based: one urgent skill makes the whole ticket urgent.
                    -- Not taken as input, or every customer would be urgent.
                    CASE WHEN bool_or(urgent) THEN 'high' ELSE 'normal' END::urgency_level,
@@ -74,12 +75,16 @@ def create_ticket(payload: TicketIn, con: psycopg.Connection = Depends(db)) -> T
             FROM skills WHERE id = ANY(%(skills)s::bigint[])
             RETURNING id
             """,
-            {"customer": payload.customer_id, "language": payload.language_id,
-             "description": payload.description, "skills": payload.skill_ids},
+            {"customer": payload.customer_id, "description": payload.description,
+             "skills": payload.skill_ids},
         ).fetchone()["id"]
         con.execute(
             "INSERT INTO ticket_skills SELECT %s, unnest(%s::bigint[])",
             (ticket_id, payload.skill_ids),
+        )
+        con.execute(
+            "INSERT INTO ticket_languages SELECT %s, unnest(%s::bigint[])",
+            (ticket_id, payload.language_ids),
         )
     return fetch(con, ticket_id)
 

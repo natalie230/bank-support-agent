@@ -35,7 +35,7 @@ skill = one("SELECT id FROM skills WHERE name = 'fraud'")
 agent = one("UPDATE agents SET status = 'available'"
             " WHERE email = 'priya@bank.example' RETURNING id")
 
-body = {"customer_id": cust, "language_id": lang, "skill_ids": [skill],
+body = {"customer_id": cust, "language_ids": [lang], "skill_ids": [skill],
         "description": "card charged twice"}
 
 r = client.post("/tickets", json=body)
@@ -44,6 +44,7 @@ ticket = r.json()
 assert ticket["status"] == "open", ticket
 assert ticket["agent_id"] is None, ticket
 assert ticket["skill_ids"] == [skill], ticket
+assert ticket["language_ids"] == [lang], ticket
 assert ticket["urgency"] == "high", ticket  # fraud is an urgent skill; nobody asked
 
 r = client.get(f"/tickets/{ticket['id']}")
