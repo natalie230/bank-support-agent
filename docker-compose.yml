@@ -1,0 +1,46 @@
+# The whole desk on one host: docker compose up --build
+# Frontend on :8501, API on :8000. Postgres loads the schema and seed on its
+# first boot only -- `docker compose down -v` to start over.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: bank_support
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # the official image runs these in name order on an empty data dir
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql:ro
+      - ./backend/seed.sql:/docker-entrypoint-initdb.d/2-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bank_support"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  backend:
+    build: .
+    image: bank-support-agent
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/bank_support
+      SKILL_THRESHOLD: ${SKILL_THRESHOLD:-1.0}
+      WAIT_THRESHOLD_SECONDS: ${WAIT_THRESHOLD_SECONDS:-120}
+      CLAIM_EXPIRY_SECONDS: ${CLAIM_EXPIRY_SECONDS:-3600}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    image: bank-support-agent
+    command: streamlit run frontend/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --server.fileWatcherType none --client.toolbarMode minimal --browser.gatherUsageStats false
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
