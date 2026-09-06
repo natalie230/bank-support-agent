@@ -6,8 +6,17 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi[standard]>=0.141.1",
-    "httpx>=0.28.1",
     "psycopg[binary]>=3.3.4",
     "python-dotenv>=1.2.2",
+]
+
+# the streamlit frontend is its own image (frontend/Dockerfile) and does not
+# need the API's packages. A default group, so `uv run` locally installs it.
+[dependency-groups]
+frontend = [
+    "httpx>=0.28.1",
     "streamlit>=1.63.0",
 ]
+
+[tool.uv]
+default-groups = ["frontend"]

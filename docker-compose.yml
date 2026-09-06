@@ -19,8 +19,10 @@ services:
       retries: 30
 
   backend:
-    build: .
-    image: bank-support-agent
+    build:
+      context: .  # the shared pyproject.toml / uv.lock live at the root
+      dockerfile: backend/Dockerfile
+    image: bank-support-backend
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/bank_support
       SKILL_THRESHOLD: ${SKILL_THRESHOLD:-1.0}
@@ -33,8 +35,10 @@ services:
         condition: service_healthy
 
   frontend:
-    image: bank-support-agent
-    command: streamlit run frontend/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --server.fileWatcherType none --client.toolbarMode minimal --browser.gatherUsageStats false
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: bank-support-frontend
     environment:
       BACKEND_URL: http://backend:8000
     ports:

@@ -15,7 +15,8 @@ the customer does not get to set it.
 
 ## Running it with Docker
 
-One image runs both servers; `docker compose` adds Postgres.
+Each server has its own image (`backend/Dockerfile`, `frontend/Dockerfile`);
+`docker compose` builds both and adds Postgres.
 
 ```bash
 docker compose up --build
@@ -28,7 +29,7 @@ password and the routing knobs with a `.env` next to the compose file (see
 `.env.example`).
 
 On a single host such as one EC2 instance: install Docker, copy the repo (or
-the built image plus `docker-compose.yml` and the two SQL files),
+the two built images plus `docker-compose.yml` and the two SQL files),
 `docker compose up -d`, and open ports 8501 and 8000 in the security group.
 
 ## Running it locally
@@ -82,7 +83,8 @@ backend/main.py     FastAPI routes
 backend/db.py       claim + release SQL, and the schema rebuild entry point
 backend/schema.sql  tables; backend/seed.sql  reference data and roster
 frontend/app.py     Streamlit console: customer chat and agent desk
-Dockerfile          one image for both servers; docker-compose.yml adds Postgres
+backend/Dockerfile  the API image;  frontend/Dockerfile  the Streamlit image
+docker-compose.yml  builds both and adds Postgres
 ```
 
 Tunable via `.env`: `SKILL_THRESHOLD`, `WAIT_THRESHOLD_SECONDS`,
