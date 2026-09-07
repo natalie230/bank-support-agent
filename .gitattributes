@@ -1,0 +1,2 @@
+# One line ending everywhere: LF in git and in the working tree.
+* text=auto eol=lf
