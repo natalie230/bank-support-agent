@@ -1,9 +1,12 @@
 # The whole desk on one host: docker compose up --build
+# restart: unless-stopped is what survives a reboot -- depends_on only orders
+# `up`, so on a restart the backend may beat Postgres and simply retry.
 # Frontend on :8501, API on :8000. Postgres loads the schema and seed on its
 # first boot only -- `docker compose down -v` to start over.
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: bank_support
@@ -23,6 +26,7 @@ services:
       context: .  # the shared pyproject.toml / uv.lock live at the root
       dockerfile: backend/Dockerfile
     image: bank-support-backend
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/bank_support
       SKILL_THRESHOLD: ${SKILL_THRESHOLD:-1.0}
@@ -39,6 +43,7 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
     image: bank-support-frontend
+    restart: unless-stopped
     environment:
       BACKEND_URL: http://backend:8000
     ports:
